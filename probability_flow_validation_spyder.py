@@ -1,38 +1,37 @@
 # -*- coding: utf-8 -*-
-"""Walk-forward validation separata per Probability Flow Momentum.
+"""Separate walk-forward validation for Probability Flow Momentum.
 
-Questo file importa `probability_flow_spyder.py` senza duplicarne il motore.
-Confronta tre politiche di conferma su più strumenti:
+This file imports `probability_flow_spyder.py` instead of duplicating the
+engine. It compares three confirmation policies across multiple instruments:
 
 STRICT
-    Direction + Wasserstein + Tail Asymmetry coerente + Velocity.
+    Direction + Wasserstein + aligned Tail Asymmetry + Velocity.
 TAIL_VETO
-    Direction + Wasserstein + Velocity; la coda blocca soltanto quando è
-    fortemente contraria.
+    Direction + Wasserstein + Velocity; the tail blocks only when strongly
+    opposed.
 SUPPORT_OR
-    Direction + almeno uno fra Wasserstein, Tail Asymmetry coerente e Velocity.
-    È volutamente permissiva e va letta come stress test, non come conferma più
-    affidabile per definizione.
+    Direction + at least one of Wasserstein, aligned Tail Asymmetry, or Velocity.
+    It is deliberately permissive and should be read as a stress test, not as a
+    more reliable confirmation by definition.
 
-La calibrazione usa esclusivamente il tratto di training precedente a ogni fold;
-le metriche OOS partono dalla barra successiva al segnale, coerentemente con
-`ActionNextBar`. La performance dei RAW viene riportata come benchmark e
-confrontata con le tre politiche CONFIRMED. I punti sovrapposti alle barre nei
-grafici mostrano i singoli fold: non sono intervalli di confidenza IID, perché
-gli outcome a più barre possono sovrapporsi nel tempo.
+Calibration uses only the training segment preceding each fold. OOS metrics
+start at the bar following the signal, consistently with `ActionNextBar`. RAW
+performance is reported as a benchmark and compared with the three CONFIRMED
+policies. Points overlaid on chart bars show individual folds; they are not IID
+confidence intervals because multi-bar outcomes may overlap in time.
 
-La macchina RAW/pending viene riavviata all'inizio di ogni test: in questo modo
-una soglia appena calibrata non viene applicata retroattivamente a un candidato
-nato nel fold precedente. Un outcome può invece terminare nel fold successivo,
-perché ciò riguarda solo la misurazione futura di un segnale già congelato.
+The RAW/pending state machine is restarted at the beginning of each test. A
+newly calibrated threshold is therefore never applied retroactively to a
+candidate born in the previous fold. An outcome may end in the next fold,
+because this affects only future measurement of an already frozen signal.
 
-Tutti gli output restano nel Variable Explorer e nei Plot di Spyder. Il
-programma non salva CSV, immagini o altri file.
+All outputs remain in Spyder's Variable Explorer and Plots pane. The program
+does not save CSV files, images, or any other output.
 
-Esecuzione in Spyder:
-1. Tenere questo file nella stessa cartella di probability_flow_spyder.py.
-2. Modificare, se necessario, la sezione CONFIGURAZIONE UTENTE.
-3. Premere F5.
+Running in Spyder:
+1. Keep this file in the same directory as probability_flow_spyder.py.
+2. Edit the USER CONFIGURATION section if needed.
+3. Press F5.
 """
 
 from __future__ import annotations
@@ -51,56 +50,55 @@ import numpy as np
 import pandas as pd
 
 
-# %% CONFIGURAZIONE UTENTE
-DATA_SOURCE = "yfinance"  # "yfinance" oppure "demo"
+# %% USER CONFIGURATION
+DATA_SOURCE = "yfinance"  # "yfinance" or "demo"
 TICKERS = ("SPY", "QQQ", "BTC-USD", "EURUSD=X")
 YFINANCE_PERIOD = "max"
 YFINANCE_INTERVAL = "1d"
 
-# Scelta conservativa: con dati Yahoo si elimina l'ultima barra, che potrebbe
-# essere ancora in formazione. Su uno storico daily il costo è una sola barra.
+# Conservative choice: drop the latest Yahoo bar because it may still be
+# forming. On daily history this costs only one bar.
 DROP_LAST_YFINANCE_BAR = True
 
-# Walk-forward expanding: il primo training occupa il 55% dello storico; ogni
-# fold successivo incorpora tutti i fold già osservati e valuta il successivo.
+# Expanding walk-forward: the initial training segment covers 55% of history;
+# each subsequent fold includes all previously observed folds and tests the next.
 INITIAL_TRAIN_RATIO = 0.55
 NUM_WALKFORWARD_FOLDS = 4
 
-# Calibrazione parsimoniosa: varia insieme la severità delle soglie di evidenza.
-# Il veto di coda resta fisso: moltiplicarlo per la stessa scala renderebbe il
-# veto meno severo proprio quando gli altri filtri diventano più severi.
-# Una griglia piccola limita l'overfitting. 1.00 equivale ai default del motore.
+# Parsimonious calibration: vary all evidence-threshold severities together.
+# The tail veto stays fixed; multiplying it by the same scale would make the
+# veto less strict exactly when the other filters become stricter.
+# A small grid limits overfitting. 1.00 equals the engine defaults.
 THRESHOLD_SCALES = (0.75, 1.00, 1.25)
 CALIBRATION_HORIZON = 10
 MIN_CALIBRATION_EVENTS = 12
 
 FORWARD_HORIZONS = (1, 5, 10, 20)
 
-# Usa la stessa coorte di rendimenti per tutti gli orizzonti: un evento entra
-# soltanto se esistono l'Open d'ingresso e il Close all'orizzonte massimo.
-# MAE/MFE hanno una numerosità separata quando manca un High/Low intermedio.
-# Gli outcome possono attraversare il confine del fold; soglia e segnale restano
-# quelli congelati al momento della conferma OOS.
+# Use the same return cohort for every horizon: an event is included only when
+# both the entry Open and the maximum-horizon Close exist. MAE/MFE use separate
+# sample sizes when an intermediate High/Low is missing. Outcomes may cross a
+# fold boundary; thresholds and signals remain frozen at OOS confirmation time.
 COMMON_OUTCOME_COHORT = True
 
-# La soglia della coda usata come veto è volutamente molto più forte della
-# soglia di supporto direzionale.
+# The tail threshold used as a veto is deliberately much stronger than the
+# directional-support threshold.
 TAIL_VETO_Z = 0.75
 
-# Costo totale entrata+uscita sottratto ai rendimenti. Lasciare 0.0 per una
-# lettura puramente diagnostica dell'indicatore.
+# Total entry-plus-exit cost deducted from returns. Leave at 0.0 for a purely
+# diagnostic reading of the indicator.
 ROUND_TRIP_COST_BPS = 0.0
 
 SHOW_FIGURES = True
 
-# Solo diagnostica: oltre questa quota lo stato viene segnalato come quasi
-# degenere. Il valore non modifica né calibra il motore.
+# Diagnostic only: above this share, the state is flagged as nearly degenerate.
+# This value neither modifies nor calibrates the engine.
 STATE_DOMINANCE_WARNING_PCT = 0.90
 
 
 @dataclass(frozen=True)
 class ValidationConfig:
-    """Parametri del validatore; non modifica la configurazione del motore."""
+    """Validator parameters; does not modify engine configuration."""
 
     data_source: str = DATA_SOURCE
     tickers: tuple[str, ...] = TICKERS
@@ -121,59 +119,59 @@ class ValidationConfig:
 
     def validate(self) -> None:
         if self.data_source not in ("yfinance", "demo"):
-            raise ValueError("data_source deve essere 'yfinance' oppure 'demo'.")
+            raise ValueError("data_source must be 'yfinance' or 'demo'.")
         if not self.tickers or any(not str(ticker).strip() for ticker in self.tickers):
-            raise ValueError("tickers deve contenere almeno un simbolo valido.")
+            raise ValueError("tickers must contain at least one valid symbol.")
         if not 0.30 <= self.initial_train_ratio <= 0.85:
-            raise ValueError("initial_train_ratio deve essere compreso tra 0.30 e 0.85.")
+            raise ValueError("initial_train_ratio must be between 0.30 and 0.85.")
         if (
             isinstance(self.n_folds, bool)
             or not isinstance(self.n_folds, (int, np.integer))
             or self.n_folds < 1
         ):
-            raise ValueError("n_folds deve essere almeno 1.")
+            raise ValueError("n_folds must be at least 1.")
         if not self.threshold_scales:
-            raise ValueError("threshold_scales non può essere vuoto.")
+            raise ValueError("threshold_scales cannot be empty.")
         if any(not np.isfinite(value) or value <= 0 for value in self.threshold_scales):
-            raise ValueError("Ogni threshold scale deve essere positiva e finita.")
+            raise ValueError("Every threshold scale must be positive and finite.")
         if (
             isinstance(self.calibration_horizon, bool)
             or not isinstance(self.calibration_horizon, (int, np.integer))
             or self.calibration_horizon < 1
         ):
-            raise ValueError("calibration_horizon deve essere almeno 1.")
+            raise ValueError("calibration_horizon must be at least 1.")
         if (
             isinstance(self.min_calibration_events, bool)
             or not isinstance(self.min_calibration_events, (int, np.integer))
             or self.min_calibration_events < 2
         ):
-            raise ValueError("min_calibration_events deve essere almeno 2.")
+            raise ValueError("min_calibration_events must be at least 2.")
         if not self.horizons or any(
             isinstance(horizon, bool)
             or not isinstance(horizon, (int, np.integer))
             or horizon < 1
             for horizon in self.horizons
         ):
-            raise ValueError("Gli orizzonti devono essere interi positivi.")
+            raise ValueError("Horizons must be positive integers.")
         if tuple(sorted(set(self.horizons))) != self.horizons:
-            raise ValueError("horizons deve essere ordinato e senza duplicati.")
+            raise ValueError("horizons must be sorted and contain no duplicates.")
         if not isinstance(self.common_outcome_cohort, (bool, np.bool_)):
-            raise ValueError("common_outcome_cohort deve essere booleano.")
+            raise ValueError("common_outcome_cohort must be boolean.")
         if not np.isfinite(self.tail_veto_z) or self.tail_veto_z <= 0:
-            raise ValueError("tail_veto_z deve essere positivo e finito.")
+            raise ValueError("tail_veto_z must be positive and finite.")
         if self.tail_veto_z > BASE_INDICATOR_CONFIG.zscore_clip:
             raise ValueError(
-                "tail_veto_z non può superare lo zscore_clip del motore; "
-                "il veto diventerebbe irraggiungibile."
+                "tail_veto_z cannot exceed the engine's zscore_clip; "
+                "the veto would become unreachable."
             )
         if not np.isfinite(self.round_trip_cost_bps) or self.round_trip_cost_bps < 0:
-            raise ValueError("round_trip_cost_bps deve essere finito e non negativo.")
+            raise ValueError("round_trip_cost_bps must be finite and non-negative.")
         if (
             not np.isfinite(self.state_dominance_warning_pct)
             or not 0.50 < self.state_dominance_warning_pct < 1.0
         ):
             raise ValueError(
-                "state_dominance_warning_pct deve essere compreso tra 0.50 e 1.0."
+                "state_dominance_warning_pct must be between 0.50 and 1.0."
             )
 
 
@@ -190,7 +188,7 @@ SERIES_COLORS = {
 
 @dataclass(frozen=True)
 class ConfirmationThresholds:
-    """Soglie selezionate sul solo training di un fold."""
+    """Thresholds selected using only one fold's training segment."""
 
     scale: float
     direction: float
@@ -204,28 +202,28 @@ class ConfirmationThresholds:
 class WalkForwardFold:
     fold: int
     train_start: int
-    train_end: int  # esclusivo
+    train_end: int  # exclusive
     test_start: int
-    test_end: int  # esclusivo
+    test_end: int  # exclusive
 
 
-# %% IMPORT DEL MOTORE CONGELATO
+# %% IMPORT FROZEN ENGINE
 def _load_probability_flow_engine() -> Any:
-    """Importa il motore senza eseguirne `main()` né scrivere bytecode."""
+    """Import the engine without running `main()` or writing bytecode."""
     engine_path = Path(__file__).resolve().with_name("probability_flow_spyder.py")
     if not engine_path.is_file():
         raise FileNotFoundError(
-            "probability_flow_spyder.py deve trovarsi nella stessa cartella "
-            "del validatore."
+            "probability_flow_spyder.py must be in the same directory as the "
+            "validator."
         )
 
     module_name = "_probability_flow_engine_for_validation"
     specification = importlib.util.spec_from_file_location(module_name, engine_path)
     if specification is None or specification.loader is None:
-        raise ImportError(f"Impossibile importare il motore da {engine_path}.")
+        raise ImportError(f"Unable to import the engine from {engine_path}.")
 
     module = importlib.util.module_from_spec(specification)
-    # dataclasses risolve le annotazioni tramite sys.modules durante l'import.
+    # dataclasses resolves annotations through sys.modules during import.
     sys.modules[module_name] = module
     previous_bytecode_setting = sys.dont_write_bytecode
     sys.dont_write_bytecode = True
@@ -240,13 +238,13 @@ ENGINE = _load_probability_flow_engine()
 BASE_INDICATOR_CONFIG = ENGINE.CONFIG
 
 
-# %% CARICAMENTO MULTI-ASSET
+# %% MULTI-ASSET DATA LOADING
 def _provenance_flag(
     raw: pd.DataFrame,
     normalized_columns: dict[str, Any],
     key: str,
 ) -> np.ndarray | None:
-    """Legge un flag booleano senza trasformare la stringa ``False`` in True."""
+    """Read a boolean flag without converting the string ``False`` to True."""
     if key not in normalized_columns:
         return None
     values = raw[normalized_columns[key]]
@@ -260,15 +258,15 @@ def _provenance_flag(
 
 
 def _observed_ohlc_masks(raw: pd.DataFrame, ticker: str) -> pd.DataFrame:
-    """Separa Open osservati e percorsi High/Low utilizzabili per MAE/MFE.
+    """Separate observed Opens from High/Low paths usable for MAE/MFE.
 
-    L'Open rende eseguibile il rendimento dalla barra successiva; High e Low
-    servono soltanto alle escursioni. Un frame già sanitizzato deve conservare
-    esplicitamente questi flag, perché altrimenti OHLC reali e valori ricavati
-    dal solo Close non sono più distinguibili.
+    An observed Open makes the next-bar return executable; High and Low are
+    used only for excursions. An already sanitized frame must preserve these
+    flags explicitly, otherwise genuine OHLC data cannot be distinguished from
+    values derived from Close alone.
     """
     if raw is None or raw.empty:
-        raise ValueError(f"{ticker}: dataset vuoto.")
+        raise ValueError(f"{ticker}: empty dataset.")
 
     normalized_columns = {
         "".join(
@@ -285,9 +283,9 @@ def _observed_ohlc_masks(raw: pd.DataFrame, ticker: str) -> pd.DataFrame:
     ]
     if missing:
         raise ValueError(
-            f"{ticker}: la validazione richiede OHLC reali; mancano {missing}. "
-            "Una serie close-only può essere usata nel motore grafico, non per "
-            "entry, rendimenti, MAE o MFE."
+            f"{ticker}: validation requires genuine OHLC data; missing {missing}. "
+            "A close-only series can be used by the charting engine, but not for "
+            "entries, returns, MAE, or MFE."
         )
 
     has_legacy_provenance = "observedohlc" in normalized_columns
@@ -298,11 +296,11 @@ def _observed_ohlc_masks(raw: pd.DataFrame, ticker: str) -> pd.DataFrame:
     has_complete_provenance = has_legacy_provenance or has_split_provenance
     if "analysisclose" in normalized_columns and not has_complete_provenance:
         raise ValueError(
-            f"{ticker}: il frame sembra già sanitizzato (contiene "
-            "AnalysisClose), ma non conserva entrambi i flag ObservedOpen e "
-            "ObservedExcursion (oppure il legacy ObservedOHLC). Passare gli "
-            "OHLC originali o la provenienza completa; il validatore non "
-            "presume che valori sintetizzati siano osservati."
+            f"{ticker}: the frame appears to be already sanitized (it contains "
+            "AnalysisClose), but it does not preserve both ObservedOpen and "
+            "ObservedExcursion flags (or legacy ObservedOHLC). Pass the original "
+            "OHLC data or complete provenance; the validator does not assume "
+            "synthesized values were observed."
         )
 
     ohlc = pd.DataFrame(
@@ -323,12 +321,12 @@ def _observed_ohlc_masks(raw: pd.DataFrame, ticker: str) -> pd.DataFrame:
     high_observed = np.isfinite(high_values) & (high_values > 0.0)
     low_observed = np.isfinite(low_values) & (low_values > 0.0)
 
-    # Piccola tolleranza per arrotondamenti del provider dopo auto_adjust.
+    # Small tolerance for provider rounding after auto_adjust.
     tolerance = 1e-10
     high_valid = high_values >= close_values * (1.0 - tolerance)
     low_valid = low_values <= close_values * (1.0 + tolerance)
     range_valid = high_values >= low_values * (1.0 - tolerance)
-    # Se l'Open esiste, High/Low devono comprendere anche l'apertura.
+    # When Open exists, High/Low must also contain the opening price.
     high_valid &= (~open_observed) | (
         high_values >= open_values * (1.0 - tolerance)
     )
@@ -374,7 +372,7 @@ def _observed_ohlc_masks(raw: pd.DataFrame, ticker: str) -> pd.DataFrame:
     )
     parsed_dates = pd.to_datetime(raw_dates, errors="coerce", utc=True)
     if bool(pd.isna(parsed_dates).any()):
-        raise ValueError(f"{ticker}: sono presenti date non interpretabili.")
+        raise ValueError(f"{ticker}: unparseable dates are present.")
 
     observed_frame = pd.DataFrame(
         {
@@ -394,7 +392,7 @@ def _observed_ohlc_masks(raw: pd.DataFrame, ticker: str) -> pd.DataFrame:
 
 
 def _sanitize_validation_ohlcv(raw: pd.DataFrame, ticker: str) -> pd.DataFrame:
-    """Sanitizza i prezzi e conserva la provenienza delle OHLC."""
+    """Sanitize prices while preserving OHLC provenance."""
     observed = _observed_ohlc_masks(raw, ticker)
     data = ENGINE.sanitize_ohlcv(raw)
     for column in ("ObservedOpen", "ObservedExcursion", "ObservedOHLC"):
@@ -411,7 +409,7 @@ def _download_yfinance(ticker: str, config: ValidationConfig) -> pd.DataFrame:
         import yfinance as yf
     except ImportError as exc:
         raise ImportError(
-            "Per la validazione multi-asset installare yfinance con: "
+            "For multi-asset validation, install yfinance with: "
             "pip install yfinance"
         ) from exc
 
@@ -422,11 +420,11 @@ def _download_yfinance(ticker: str, config: ValidationConfig) -> pd.DataFrame:
         actions=False,
     )
     if history.empty:
-        raise ValueError("Yahoo Finance non ha restituito osservazioni.")
+        raise ValueError("Yahoo Finance returned no observations.")
     data = _sanitize_validation_ohlcv(history, ticker)
     if config.drop_last_yfinance_bar:
         if len(data) < 3:
-            raise ValueError("Dati insufficienti dopo la rimozione dell'ultima barra.")
+            raise ValueError("Insufficient data after dropping the latest bar.")
         data = data.iloc[:-1].copy()
     return data
 
@@ -435,7 +433,7 @@ def load_validation_data(
     config: ValidationConfig = VALIDATION_CONFIG,
     supplied_data: dict[str, pd.DataFrame] | None = None,
 ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
-    """Carica gli asset; supplied_data consente test CSV/memory senza download."""
+    """Load assets; supplied_data enables CSV/in-memory tests without downloads."""
     config.validate()
     datasets: dict[str, pd.DataFrame] = {}
     errors: list[dict[str, str]] = []
@@ -447,7 +445,7 @@ def load_validation_data(
                     frame,
                     str(ticker),
                 )
-            except Exception as exc:  # un asset errato non invalida gli altri
+            except Exception as exc:  # one invalid asset does not invalidate others
                 errors.append({"Ticker": str(ticker), "Error": str(exc)})
         return datasets, pd.DataFrame(errors, columns=["Ticker", "Error"])
 
@@ -468,17 +466,17 @@ def load_validation_data(
     for ticker in config.tickers:
         try:
             datasets[ticker] = _download_yfinance(ticker, config)
-        except Exception as exc:  # conserva il risultato degli altri asset
+        except Exception as exc:  # preserve results for all other assets
             errors.append({"Ticker": ticker, "Error": str(exc)})
     return datasets, pd.DataFrame(errors, columns=["Ticker", "Error"])
 
 
-# %% POLITICHE DI CONFERMA CAUSALI
+# %% CAUSAL CONFIRMATION POLICIES
 def thresholds_from_scale(
     scale: float,
     tail_veto_z: float,
 ) -> ConfirmationThresholds:
-    """Scala insieme le soglie del motore, senza usare dati del test."""
+    """Scale engine thresholds together without using test data."""
     return ConfirmationThresholds(
         scale=float(scale),
         direction=float(
@@ -489,8 +487,9 @@ def thresholds_from_scale(
         ),
         tail_z=float(BASE_INDICATOR_CONFIG.confirmation_min_tail_z * scale),
         velocity_z=float(BASE_INDICATOR_CONFIG.confirmation_min_velocity_z * scale),
-        # Il veto ha orientamento opposto alle soglie di evidenza: una soglia
-        # assoluta più alta blocca meno eventi. Rimane quindi fisso ex ante.
+        # The veto has the opposite orientation to evidence thresholds: a
+        # higher absolute threshold blocks fewer events. It therefore stays
+        # fixed ex ante.
         tail_veto_z=float(tail_veto_z),
     )
 
@@ -532,7 +531,7 @@ def _policy_filters_pass(
             direction_gate
             and (wasserstein_gate or aligned_tail_gate or velocity_gate)
         )
-    raise ValueError(f"Politica sconosciuta: {policy!r}.")
+    raise ValueError(f"Unknown policy: {policy!r}.")
 
 
 def generate_policy_events(
@@ -541,17 +540,17 @@ def generate_policy_events(
     thresholds: ConfirmationThresholds,
     confirmation_window: int | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Lega ogni CONFIRMED a un RAW recente con una macchina causale.
+    """Link each CONFIRMED event to a recent RAW event with a causal state machine.
 
-    La conferma è emessa sulla barra in cui i filtri diventano veri, mai sulla
-    barra RAW precedente. Sono ammessi lag 0..confirmation_window-1.
+    Confirmation is emitted on the bar where filters become true, never on a
+    previous RAW bar. Lags 0..confirmation_window-1 are allowed.
     """
     if policy not in POLICIES:
-        raise ValueError(f"policy deve essere una di {POLICIES}.")
+        raise ValueError(f"policy must be one of {POLICIES}.")
     if confirmation_window is None:
         confirmation_window = BASE_INDICATOR_CONFIG.confirmation_window
     if confirmation_window < 1:
-        raise ValueError("confirmation_window deve essere almeno 1.")
+        raise ValueError("confirmation_window must be at least 1.")
 
     required_columns = (
         "MetricsReady",
@@ -563,7 +562,7 @@ def generate_policy_events(
     )
     missing = [column for column in required_columns if column not in metrics]
     if missing:
-        raise ValueError(f"Colonne mancanti nel motore: {missing}.")
+        raise ValueError(f"Missing engine columns: {missing}.")
 
     signal_values = np.full(len(metrics), "", dtype=object)
     lag_values = np.full(len(metrics), np.nan, dtype=float)
@@ -661,9 +660,9 @@ def generate_policy_events(
 
 
 def build_raw_events(metrics: pd.DataFrame) -> pd.DataFrame:
-    """Trasforma gli zero-cross RAW del motore in eventi valutabili OOS."""
+    """Convert engine RAW zero-crossings into OOS-evaluable events."""
     if "RawSignalAtClose" not in metrics:
-        raise ValueError("Manca RawSignalAtClose nel risultato del motore.")
+        raise ValueError("RawSignalAtClose is missing from the engine output.")
 
     records: list[dict[str, Any]] = []
     for position, (timestamp, raw_signal) in enumerate(
@@ -678,8 +677,8 @@ def build_raw_events(metrics: pd.DataFrame) -> pd.DataFrame:
                 "RawPosition": position,
                 "RawTime": timestamp,
                 "Side": side,
-                # Lo zero-cross è esso stesso il segnale RAW: posizione e tempo
-                # operativi coincidono, con ingresso all'Open successivo.
+                # The zero-crossing is itself the RAW signal: operational time
+                # and position coincide, with entry at the next Open.
                 "ConfirmationPosition": position,
                 "ConfirmationTime": timestamp,
                 "LagBars": 0.0,
@@ -702,7 +701,7 @@ def build_raw_events(metrics: pd.DataFrame) -> pd.DataFrame:
 
 
 def _offset_event_positions(events: pd.DataFrame, offset: int) -> pd.DataFrame:
-    """Riporta gli eventi calcolati su una slice alle posizioni globali."""
+    """Map events calculated on a slice back to global positions."""
     shifted = events.copy()
     if shifted.empty or offset == 0:
         return shifted
@@ -716,7 +715,7 @@ def _offset_event_positions(events: pd.DataFrame, offset: int) -> pd.DataFrame:
     return shifted
 
 
-# %% WALK-FORWARD E OUTCOME
+# %% WALK-FORWARD AND OUTCOMES
 def make_walk_forward_folds(
     n_rows: int,
     config: ValidationConfig = VALIDATION_CONFIG,
@@ -731,12 +730,12 @@ def make_walk_forward_folds(
     )
     if initial_train_end < minimum_train:
         raise ValueError(
-            f"Training iniziale troppo corto: {initial_train_end} barre; "
-            f"ne servono almeno {minimum_train}."
+            f"Initial training segment is too short: {initial_train_end} bars; "
+            f"at least {minimum_train} are required."
         )
     if n_rows - initial_train_end < config.n_folds * max(config.horizons):
         raise ValueError(
-            "Periodo OOS troppo corto per il numero di fold e gli orizzonti scelti."
+            "The OOS period is too short for the selected folds and horizons."
         )
 
     boundaries = np.linspace(
@@ -776,12 +775,12 @@ def _event_outcome_rows(
     outcome_end_position: int | None = None,
     require_all_horizons: bool = False,
 ) -> list[dict[str, Any]]:
-    """Outcome eseguibili con ingresso all'Open della barra successiva.
+    """Executable outcomes with entry at the next bar's Open.
 
-    `end_position` delimita le barre in cui il segnale può nascere.
-    `outcome_end_position` delimita soltanto i prezzi futuri osservabili: nella
-    valutazione OOS può quindi superare il confine del fold senza modificare il
-    segnale o le soglie già congelate.
+    `end_position` bounds the bars on which a signal may originate.
+    `outcome_end_position` bounds only observable future prices, so in OOS
+    evaluation it may cross a fold boundary without changing the already
+    frozen signal or thresholds.
     """
     if events.empty:
         return []
@@ -802,10 +801,10 @@ def _event_outcome_rows(
     if outcome_end_position <= 0:
         return []
 
-    # Se un CSV contiene OHLC non aggiustate e Adj Close, le metriche del
-    # motore lavorano su AnalysisClose. Lo stesso fattore viene applicato a
-    # tutte le OHLC, evitando falsi rendimenti su split/dividendi. Con Yahoo
-    # auto_adjust=True il fattore è semplicemente 1.
+    # If a CSV contains unadjusted OHLC and Adj Close, engine metrics operate on
+    # AnalysisClose. Apply the same factor to all OHLC values to avoid false
+    # returns around splits or dividends. With Yahoo auto_adjust=True, this
+    # factor is simply 1.
     close_unadjusted = data["Close"].to_numpy(dtype=float)
     analysis_close = data["AnalysisClose"].to_numpy(dtype=float)
     adjustment_factor = analysis_close / close_unadjusted
@@ -878,7 +877,7 @@ def _event_outcome_rows(
                 else:
                     mfe = (entry_price - path_low) / entry_price
                     mae = (entry_price - path_high) / entry_price
-                # Convenzione esplicita: MAE <= 0 e MFE >= 0.
+                # Explicit convention: MAE <= 0 and MFE >= 0.
                 mae = min(0.0, float(mae))
                 mfe = max(0.0, float(mfe))
             else:
@@ -916,7 +915,7 @@ def _calibration_score(
     train_end: int,
     config: ValidationConfig,
 ) -> tuple[float, int, float]:
-    """T-stat descrittiva sul training; nessuna osservazione OOS è letta."""
+    """Descriptive training t-statistic; no OOS observation is read."""
     rows = _event_outcome_rows(
         ticker="CALIBRATION",
         policy="CALIBRATION",
@@ -993,7 +992,7 @@ def _select_thresholds_on_training(
         row for row in candidate_rows if np.isfinite(row["CalibrationScore"])
     ]
     if valid_candidates:
-        # A parità quasi esatta preferisce più eventi, poi la scala più vicina a 1.
+        # For near ties, prefer more events and then the scale closest to 1.
         chosen = max(
             valid_candidates,
             key=lambda row: (
@@ -1045,7 +1044,7 @@ def _state_gate_row(
     fold: WalkForwardFold,
     metrics: pd.DataFrame,
 ) -> dict[str, Any]:
-    """Diagnostica quali condizioni rendono raro lo stato STABLE."""
+    """Diagnose which conditions make the STABLE state rare."""
     test = metrics.iloc[fold.test_start : fold.test_end]
     ready = test.loc[test["MetricsReady"]].copy()
     ready_count = int(len(ready))
@@ -1180,7 +1179,7 @@ def _fold_signal_row(
     return row, confirmed_in_test
 
 
-# %% AGGREGAZIONE E GRAFICI
+# %% AGGREGATION AND CHARTS
 def _aggregate_signal_summary(
     fold_results: pd.DataFrame,
     confirmed_events: pd.DataFrame,
@@ -1261,7 +1260,7 @@ def _aggregate_state_summary(state_folds: pd.DataFrame) -> pd.DataFrame:
 
 
 def _aggregate_state_gate_summary(state_gate_folds: pd.DataFrame) -> pd.DataFrame:
-    """Frequenze pooled delle singole porte di quiete, senza ritararle."""
+    """Pooled frequencies of individual quiet-state gates, without retuning."""
     if state_gate_folds.empty:
         return pd.DataFrame()
     rows: list[dict[str, Any]] = []
@@ -1343,7 +1342,7 @@ def _aggregate_performance(outcomes: pd.DataFrame) -> pd.DataFrame:
 
 
 def _aggregate_fold_performance(outcomes: pd.DataFrame) -> pd.DataFrame:
-    """Dispersione osservata fra fold, senza assumere eventi IID."""
+    """Observed dispersion across folds without assuming IID events."""
     columns = [
         "Ticker",
         "Policy",
@@ -1384,7 +1383,7 @@ def _aggregate_fold_performance(outcomes: pd.DataFrame) -> pd.DataFrame:
 
 
 def _aggregate_performance_by_side(outcomes: pd.DataFrame) -> pd.DataFrame:
-    """Separa BUY e SELL per evitare che l'aggregato nasconda asimmetrie."""
+    """Separate BUY and SELL so pooled results do not hide asymmetries."""
     columns = [
         "Ticker",
         "Policy",
@@ -1440,7 +1439,7 @@ def _plot_grouped_bars(
     zero_line: bool = False,
 ) -> None:
     if table.empty or value not in table:
-        ax.text(0.5, 0.5, "Dati insufficienti", ha="center", va="center")
+        ax.text(0.5, 0.5, "Insufficient data", ha="center", va="center")
         ax.set_axis_off()
         return
     pivot = table.pivot(index="Ticker", columns="Policy", values=value)
@@ -1455,8 +1454,8 @@ def _plot_grouped_bars(
         legend=False,
     )
 
-    # Le barre sono stime pooled. I punti mostrano la dispersione dei singoli
-    # fold senza fingere indipendenza tra segnali sovrapposti.
+    # Bars are pooled estimates. Points show dispersion across individual folds
+    # without pretending that overlapping signals are independent.
     if fold_table is not None and not fold_table.empty and value in fold_table:
         for column_position, policy in enumerate(pivot.columns):
             if column_position >= len(ax.containers):
@@ -1488,8 +1487,8 @@ def _plot_grouped_bars(
                     zorder=4,
                 )
 
-    # Numerosità esposte direttamente sulle barre: il lettore non deve
-    # confondere un rendimento su pochi eventi con uno più stabile.
+    # Display sample sizes directly on bars so a return based on few events is
+    # not mistaken for a more stable estimate.
     if annotation_mode is not None:
         for column_position, policy in enumerate(pivot.columns):
             if column_position >= len(ax.containers):
@@ -1513,14 +1512,13 @@ def _plot_grouped_bars(
                 elif annotation_mode == "outcome_n":
                     label = f"n={int(row.iloc[0]['N'])}"
                 elif annotation_mode == "excursion_n":
-                    # Evita di ripetere la stessa numerosità del pannello
-                    # rendimento. La segnaliamo solo quando MAE/MFE usano un
-                    # sottoinsieme per High/Low incompleti.
+                    # Avoid repeating the return panel's sample size. Report it
+                    # only when MAE/MFE use a subset because High/Low are incomplete.
                     if int(row.iloc[0]["NExcursion"]) == int(row.iloc[0]["N"]):
                         continue
                     label = f"nMFE={int(row.iloc[0]['NExcursion'])}"
                 else:
-                    raise ValueError(f"annotation_mode sconosciuto: {annotation_mode}")
+                    raise ValueError(f"Unknown annotation_mode: {annotation_mode}")
                 patch = patches[row_position]
                 height = float(patch.get_height())
                 if not np.isfinite(height):
@@ -1568,7 +1566,7 @@ def plot_validation_summary(
     round_trip_cost_bps: float = 0.0,
     show: bool = True,
 ) -> list[plt.Figure]:
-    """Confronto diretto fra strumenti e politiche; nessun file viene scritto."""
+    """Compare instruments and policies directly without writing files."""
     figures: list[plt.Figure] = []
     ticker_order = (
         signal_summary["Ticker"].drop_duplicates().tolist()
@@ -1586,7 +1584,7 @@ def plot_validation_summary(
 
     figure, axes = plt.subplots(2, 2, figsize=(15.5, 9.5))
     figure.suptitle(
-        "Probability Flow Momentum — validazione walk-forward OOS",
+        "Probability Flow Momentum — OOS walk-forward validation",
         fontsize=14,
         fontweight="bold",
         y=0.995,
@@ -1594,7 +1592,7 @@ def plot_validation_summary(
     figure.text(
         0.5,
         0.963,
-        "4 fold expanding · barre = aggregato pooled OOS · punti = singoli fold",
+        "4 expanding folds · bars = pooled OOS aggregate · points = individual folds",
         ha="center",
         fontsize=9,
         color="#475569",
@@ -1603,8 +1601,8 @@ def plot_validation_summary(
         axes[0, 0],
         signal_summary,
         "ConfirmRate",
-        "RAW eleggibili → CONFIRMED",
-        "Tasso di conferma",
+        "Eligible RAW → CONFIRMED",
+        "Confirmation rate",
         percent=True,
         column_order=POLICIES,
         ticker_order=ticker_order,
@@ -1617,8 +1615,8 @@ def plot_validation_summary(
         axes[0, 1],
         signal_summary,
         "AvgConfirmationLag",
-        "Ritardo medio RAW → CONFIRMED — solo confermati",
-        "Barre",
+        "Average RAW → CONFIRMED lag — confirmed only",
+        "Bars",
         column_order=POLICIES,
         ticker_order=ticker_order,
         fold_table=fold_results,
@@ -1628,8 +1626,8 @@ def plot_validation_summary(
         axes[1, 0],
         performance_horizon,
         "MeanReturnNet",
-        f"Rendimento direzionale medio a {horizon} barre",
-        "Rendimento",
+        f"Average directional return at {horizon} bars",
+        "Return",
         percent=True,
         column_order=PERFORMANCE_SERIES,
         ticker_order=ticker_order,
@@ -1641,7 +1639,7 @@ def plot_validation_summary(
         axes[1, 1],
         performance_horizon,
         "MeanMFE",
-        f"MFE direzionale media a {horizon} barre — non realizzata",
+        f"Average directional MFE at {horizon} bars — unrealized",
         "MFE",
         percent=True,
         column_order=PERFORMANCE_SERIES,
@@ -1652,7 +1650,7 @@ def plot_validation_summary(
     legend_handles = [
         Patch(
             facecolor=SERIES_COLORS[name],
-            label=("RAW benchmark — solo performance" if name == "RAW" else name),
+            label=("RAW benchmark — performance only" if name == "RAW" else name),
         )
         for name in PERFORMANCE_SERIES
     ]
@@ -1668,12 +1666,11 @@ def plot_validation_summary(
         0.01,
         0.012,
         (
-            "BUY e SELL aggregati con segno direzionale · ingresso all'Open "
-            "successivo · "
-            f"costi round-trip: {round_trip_cost_bps:g} bps · "
-            "n = rendimenti; nMFE appare solo se i percorsi OHLC completi sono "
-            "meno · punti fold, non CI IID; un punto può mancare se il fold "
-            "non contiene eventi; per MFE anche se non ha percorsi OHLC completi"
+            "BUY and SELL pooled with directional sign · entry at the next Open · "
+            f"round-trip costs: {round_trip_cost_bps:g} bps · "
+            "n = returns; nMFE appears only when complete OHLC paths are fewer · "
+            "fold points, not IID confidence intervals; a point may be absent when "
+            "a fold contains no events, or for MFE when it has no complete OHLC path"
         ),
         fontsize=8,
         color="#475569",
@@ -1683,7 +1680,7 @@ def plot_validation_summary(
 
     state_figure, state_axis = plt.subplots(figsize=(11, 5.5))
     if state_summary.empty:
-        state_axis.text(0.5, 0.5, "Dati di stato insufficienti", ha="center")
+        state_axis.text(0.5, 0.5, "Insufficient state data", ha="center")
         state_axis.set_axis_off()
     else:
         state_plot = state_summary.set_index("Ticker")[["StablePct", "TransitionPct"]]
@@ -1698,12 +1695,12 @@ def plot_validation_summary(
             width=0.68,
         )
         state_axis.set_title(
-            "Occupazione stati OOS — base motore, pooled per barre sui fold",
+            "OOS state occupancy — base engine, pooled by bars across folds",
             loc="left",
             fontweight="bold",
         )
         state_axis.set_xlabel("")
-        state_axis.set_ylabel("Percentuale barre operative")
+        state_axis.set_ylabel("Percentage of operational bars")
         state_axis.yaxis.set_major_formatter(PercentFormatter(1.0))
         state_axis.tick_params(axis="x", rotation=0)
         state_axis.grid(axis="y", alpha=0.25)
@@ -1778,7 +1775,7 @@ def plot_validation_summary(
         state_figure.text(
             0.01,
             0.012,
-            "Punti = quota STABLE del singolo fold; TRANSITION è il complemento.",
+            "Points = each fold's STABLE share; TRANSITION is the complement.",
             fontsize=8,
             color="#475569",
         )
@@ -1790,21 +1787,21 @@ def plot_validation_summary(
     return figures
 
 
-# %% ESECUZIONE COMPLETA IN MEMORIA
+# %% COMPLETE IN-MEMORY EXECUTION
 def run_validation(
     config: ValidationConfig = VALIDATION_CONFIG,
     supplied_data: dict[str, pd.DataFrame] | None = None,
 ) -> dict[str, Any]:
-    """Esegue download/calcolo/calibrazione/OOS e restituisce soli oggetti RAM."""
+    """Run download/calculation/calibration/OOS and return RAM objects only."""
     config.validate()
     datasets, load_errors = load_validation_data(config, supplied_data)
     if not datasets:
         error_text = (
             load_errors.to_string(index=False)
             if not load_errors.empty
-            else "Nessun dataset disponibile."
+            else "No dataset is available."
         )
-        raise RuntimeError(f"Validazione non avviata:\n{error_text}")
+        raise RuntimeError(f"Validation did not start:\n{error_text}")
 
     validation_data: dict[str, pd.DataFrame] = {}
     sample_rows: list[dict[str, Any]] = []
@@ -1819,15 +1816,15 @@ def run_validation(
     runtime_errors: list[dict[str, str]] = []
 
     print("\nProbability Flow Momentum — Walk-Forward Validation")
-    print("Motore importato, non duplicato. Nessun file verrà salvato.\n")
+    print("Engine imported, not duplicated. No file will be saved.\n")
     source_label = "SUPPLIED_MEMORY" if supplied_data is not None else config.data_source
-    print(f"Fonte dati: {source_label.upper()}")
+    print(f"Data source: {source_label.upper()}")
     if config.data_source == "demo" and supplied_data is None:
-        print("ATTENZIONE: DEMO usa serie sintetiche, non quotazioni reali.")
+        print("WARNING: DEMO uses synthetic series, not real market quotes.")
     print()
 
     for ticker, raw_data in datasets.items():
-        print(f"[{ticker}] calcolo metriche causali...")
+        print(f"[{ticker}] calculating causal metrics...")
         try:
             metrics = ENGINE.calculate_probability_flow(
                 raw_data,
@@ -1848,7 +1845,7 @@ def run_validation(
             raw_events = build_raw_events(metrics)
         except Exception as exc:
             runtime_errors.append({"Ticker": ticker, "Error": str(exc)})
-            print(f"  escluso: {exc}")
+            print(f"  excluded: {exc}")
             continue
 
         validation_data[ticker] = metrics
@@ -1891,14 +1888,14 @@ def run_validation(
                 raw_event_frames.append(raw_in_fold)
             state_rows.append(_state_row(ticker, fold, metrics))
             state_gate_rows.append(_state_gate_row(ticker, fold, metrics))
-            # La selezione vede soltanto il training. La macchina pending viene
-            # poi inizializzata da zero sul test: una nuova soglia non viene
-            # applicata retroattivamente a candidati nati nel fold precedente.
+            # Selection sees training data only. The pending state machine is
+            # then initialized from scratch on the test segment: a new threshold
+            # is not applied retroactively to candidates born in the prior fold.
             training_metrics = metrics.iloc[: fold.train_end].copy()
             test_metrics = metrics.iloc[fold.test_start : fold.test_end].copy()
 
-            # Benchmark RAW: stesso timing eseguibile delle conferme, ma nessun
-            # filtro aggiuntivo e lag pari a zero.
+            # RAW benchmark: same executable timing as confirmations, but no
+            # additional filter and zero lag.
             outcome_rows.extend(
                 _event_outcome_rows(
                     ticker=ticker,
@@ -1978,7 +1975,7 @@ def run_validation(
                     signal_columns
                 ].copy()
 
-        print(f"  completati {len(folds)} fold expanding OOS.")
+        print(f"  completed {len(folds)} expanding OOS folds.")
 
     fold_results = pd.DataFrame(fold_rows)
     sample_summary = pd.DataFrame(sample_rows)
@@ -2009,7 +2006,7 @@ def run_validation(
                 ~state_available,
                 dominant >= config.state_dominance_warning_pct,
             ],
-            ["INSUFFICIENT_DATA", "QUASI_DEGENERATE"],
+            ["INSUFFICIENT_DATA", "NEAR_DEGENERATE"],
             default="OK",
         )
     performance_summary = _aggregate_performance(forward_returns)
@@ -2047,27 +2044,26 @@ def run_validation(
             "SelectedScaleChanges",
             "CalibrationFallbackFolds",
         ]
-        print("\nRiepilogo segnali OOS")
+        print("\nOOS signal summary")
         print(
             "ConfirmRate = ConfirmedEligibleRawCount / EligibleRawCount; "
-            "i RAW finali censurati non entrano nel tasso."
+            "censored terminal RAW events are excluded from the rate."
         )
         print(signal_summary[display_columns].to_string(index=False))
     if not sample_summary.empty:
-        print("\nPeriodi effettivi (i calendari nativi possono differire)")
+        print("\nEffective periods (native calendars may differ)")
         print(sample_summary.to_string(index=False))
         if (
             sample_summary["InvalidOOSOpenBars"].gt(0).any()
             or sample_summary["InvalidOOSExcursionBars"].gt(0).any()
         ):
             print(
-                "Qualità OHLC: un Open non osservato esclude soltanto "
-                "l'ingresso relativo; High/Low incompleti lasciano valido il "
-                "rendimento ma non MAE/MFE. Nessun OHLC sintetizzato viene "
-                "trattato come osservato."
+                "OHLC quality: an unobserved Open excludes only the associated "
+                "entry; incomplete High/Low data preserve the return but not "
+                "MAE/MFE. No synthesized OHLC value is treated as observed."
             )
     if not state_summary.empty:
-        print("\nOccupazione stati OOS (configurazione base)")
+        print("\nOOS state occupancy (base configuration)")
         print(
             state_summary[
                 [
@@ -2080,7 +2076,7 @@ def run_validation(
             ].to_string(index=False)
         )
     if not state_gate_summary.empty:
-        print("\nDiagnostica porte STABLE OOS (nessuna ricalibrazione)")
+        print("\nOOS STABLE-gate diagnostics (no recalibration)")
         print(
             state_gate_summary[
                 [
@@ -2098,7 +2094,7 @@ def run_validation(
         performance_summary["Horizon"].eq(max(config.horizons))
     ]
     if not performance_at_plot_horizon.empty:
-        print(f"\nPerformance OOS a {max(config.horizons)} barre — RAW vs CONFIRMED")
+        print(f"\nOOS performance at {max(config.horizons)} bars — RAW vs CONFIRMED")
         print(
             performance_at_plot_horizon[
                 [
@@ -2116,25 +2112,25 @@ def run_validation(
             ].to_string(index=False)
         )
     if not state_summary.empty and state_summary["StateDiagnostic"].eq(
-        "QUASI_DEGENERATE"
+        "NEAR_DEGENERATE"
     ).any():
         affected = ", ".join(
             state_summary.loc[
-                state_summary["StateDiagnostic"].eq("QUASI_DEGENERATE"), "Ticker"
+                state_summary["StateDiagnostic"].eq("NEAR_DEGENERATE"), "Ticker"
             ].astype(str)
         )
         print(
-            "\nATTENZIONE STATO: una classe supera "
-            f"{config.state_dominance_warning_pct:.0%} su {affected}. "
-            "STABLE/TRANSITION non è abbastanza discriminante; usare la "
-            "diagnostica delle porte prima di ritarare il motore. Qualunque "
-            "ritaratura ricavata da questi OOS richiede poi un nuovo holdout "
-            "intatto o un walk-forward annidato."
+            "\nSTATE WARNING: one class exceeds "
+            f"{config.state_dominance_warning_pct:.0%} for {affected}. "
+            "STABLE/TRANSITION is not sufficiently discriminative; inspect gate "
+            "diagnostics before retuning the engine. Any retuning derived from "
+            "these OOS results then requires a new untouched holdout or a nested "
+            "walk-forward design."
         )
     if not errors.empty:
-        print("\nAsset non elaborati")
+        print("\nUnprocessed assets")
         print(errors.to_string(index=False))
-    print("\nNessun file salvato: tutti gli output restano in Spyder.")
+    print("\nNo file saved: all outputs remain in Spyder.")
 
     return {
         "VALIDATION_DATA": validation_data,
