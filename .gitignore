@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Spyder and notebook metadata
+.spyproject/
+.spyderproject
+.ipynb_checkpoints/
+
+# Local secrets and operating-system files
+.env
+.env.*
+.DS_Store
+
+# Local research data and generated outputs
+data/
+*.csv
+*.parquet
+*.feather
+*.pickle
+*.pkl
+*.log
